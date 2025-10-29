@@ -1,0 +1,108 @@
+version: '3.8'
+
+services:
+  # Qdrant for vector search
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: mcp-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - ./data/qdrant:/qdrant/storage
+    environment:
+      - QDRANT__LOG_LEVEL=INFO
+    networks:
+      - backend-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:6333/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Combined Backend (MCP Server + API Server via supervisor)
+  backend:
+    build: ./backend
+    container_name: mcp-backend
+    depends_on:
+      - qdrant
+    ports:
+      - "8001:8001"  # API port for frontend
+      - "9001:9001"  # Supervisord web interface
+    env_file:
+      - ./.env  # Use repo-local .env file
+    environment:
+      # Override specific values for Docker networking
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      # MCP Transport settings
+      - MCP_TRANSPORT=stdio
+      - PYTHONUNBUFFERED=1
+      # Guest User Configuration
+      - GUEST_USER_ID=guestUser
+      - GUEST_DEVICE_ID=d58dc5e2119ae5430b9321602618c878
+      # Supervisor Web Interface Configuration
+      - SUPERVISOR_WEB_ENABLED=${SUPERVISOR_WEB_ENABLED:-true}
+      - SUPERVISOR_WEB_PORT=${SUPERVISOR_WEB_PORT:-9001}
+      - SUPERVISOR_WEB_USERNAME=${SUPERVISOR_WEB_USERNAME:-admin}
+      - SUPERVISOR_WEB_PASSWORD=${SUPERVISOR_WEB_PASSWORD:-supervisor2024}
+      # SSE Stream Configuration
+      - SSE_CONNECTION_TIMEOUT=${SSE_CONNECTION_TIMEOUT:-300}      # Max SSE connection time (seconds)
+      - SSE_RAW_DATA_WAIT=${SSE_RAW_DATA_WAIT:-1.0}               # Wait time for raw data (seconds)
+      - SSE_QUEUE_TIMEOUT=${SSE_QUEUE_TIMEOUT:-0.5}               # Queue processing timeout (seconds)
+      # API Communication Configuration
+      - API_URL=${API_URL:-http://localhost:8001}                 # Internal API URL for MCP tools
+      - API_TIMEOUT=${API_TIMEOUT:-2.0}                           # HTTP request timeout (seconds)
+      - API_RETRY_ATTEMPTS=${API_RETRY_ATTEMPTS:-2}               # Number of retry attempts
+    volumes:
+      - ./data/sessions:/app/sessions
+      - ./backend/api:/app/api:ro
+      - ./backend/logs:/app/logs
+      - ./backend/ondc-shopping-mcp:/app/ondc-shopping-mcp:ro
+    networks:
+      - backend-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ETL for data initialization (runs once on startup)
+  etl:
+    build: 
+      context: ./
+      dockerfile: ./etl/Dockerfile
+    container_name: mcp-etl
+    env_file:
+      - ./.env  # Use repo-local .env file
+    environment:
+      # Override specific values for Docker networking
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      # Map environment variables for HimiraExtractor
+      - HIMIRA_BACKEND_URL=${BACKEND_ENDPOINT:-https://hp-buyer-backend-preprod.himira.co.in/clientApis}
+      - HIMIRA_API_KEY=${WIL_API_KEY}
+      - HIMIRA_USER_ID=guestUser
+      - HIMIRA_DEVICE_ID=etl_pipeline_001
+      # Gemini API key for embeddings
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      # Qdrant collection name
+      - QDRANT_COLLECTION=himira_products
+      # ETL settings
+      - ETL_ENV=production
+      - ETL_MODE=init
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./data/etl:/app/data
+      - ./logs/etl:/app/logs
+      - ./config:/app/config:ro
+    networks:
+      - backend-network
+    restart: "no"  # Run once and stop
+
+networks:
+  backend-network:
+    driver: bridge
+    name: mcp-backend-network

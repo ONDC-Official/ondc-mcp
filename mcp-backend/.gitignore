@@ -1,0 +1,61 @@
+# Environment
+.env
+.env.local
+*.env
+
+# Reference implementations (keep locally, don't commit)
+biap-client-node-js/
+himira-nextjs-frontend-main/
+
+# Archives
+archive/
+
+# Test files
+test_*.py
+debug_*.py
+*_test.py
+# Data directories
+data/
+logs/
+sessions/
+backend/logs/
+test_logs/
+
+# Configuration (generated at runtime)
+backend/mcp_agent.config.yaml
+mcp_agent.config.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.mypy_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Docker
+*.log
+docker-compose.override.yml
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# Build
+build/
+dist/
+*.egg-info/
+Himira Order.postman_collection (2).json
+.continue/mcpServers/new-mcp-server.yaml
