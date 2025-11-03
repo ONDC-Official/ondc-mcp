@@ -2,8 +2,13 @@ name: mcp backend deployment
 
 on:
   workflow_dispatch:
-  # push:
-  #   branches: ["main"]
+
+  push:
+    paths:
+      - "mcp-backend/**"
+    branches: ["main"]
+
+
 
 jobs:
   deployment:
@@ -24,7 +29,7 @@ jobs:
           ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
 
           ssh -i ./key.pem ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} -T <<EOF
-          REPO_DIR=~/mcp
+          REPO_DIR=~/mcp-backend
           echo "Removing existing repository directory if exists"
           rm -rf \$REPO_DIR
           echo "Cloning repository from the relevant branch"
@@ -49,7 +54,7 @@ jobs:
         run: |
           echo "Writing secrets to .env file"
           ssh -i ./key.pem ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} <<EOF
-          REPO_DIR=~/mcp
+          REPO_DIR=~/mcp-backend
           echo "Writing environment variables to .env file"
           echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" >> \$REPO_DIR/mcp-backend/.env
           echo "WIL_API_KEY=${{secrets.WIL_API_KEY }}" >> \$REPO_DIR/mcp-backend/.env
@@ -106,7 +111,7 @@ jobs:
       - name: Verify .env and docker-compose.yml files
         run: |
           ssh -i ./key.pem ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} <<EOF
-          REPO_DIR=~/mcp/mcp-backend
+          REPO_DIR=~/mcp-backend/mcp-backend
           # Check if .env and docker-compose.yml files exist
           if [ ! -f \$REPO_DIR/.env ]; then
             echo ".env file not found in \$REPO_DIR!"
@@ -123,7 +128,7 @@ jobs:
         run: |
           echo "Deploying with Docker Compose"
           ssh -i ./key.pem ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} <<EOF
-          REPO_DIR=~/mcp/mcp-backend
+          REPO_DIR=~/mcp-backend/mcp-backend
           cd \$REPO_DIR
 
           # Ensure the .env and docker-compose.yml files exist
