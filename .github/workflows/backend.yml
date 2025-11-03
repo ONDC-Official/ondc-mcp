@@ -49,13 +49,12 @@ jobs:
         run: |
           echo "Writing secrets to .env file"
           ssh -i ./key.pem ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} <<EOF
-          REPO_DIR="$HOME/mcp/mcp-backend"
-          touch "\$REPO_DIR/.env"
+          REPO_DIR=~/mcp
           echo "Writing environment variables to .env file"
-          echo "FLASK_DEBUG=True" >> \$REPO_DIR/.env
-          echo "FLASK_RUN_HOST=0.0.0.0" >> \$REPO_DIR/.env
-          echo "FLASK_RUN_PORT=${{ vars.FLASK_RUN_PORT }}" >> \$REPO_DIR/.env
-          echo "GEOJSON_FILE=${{ vars.GEOJSON_FILE }}" >> \$REPO_DIR/.env
+          echo "FLASK_DEBUG=True" >> \$REPO_DIR/mcp-backend/.env
+          echo "FLASK_RUN_HOST=0.0.0.0" >> \$REPO_DIR/mcp-backend/.env
+          echo "FLASK_RUN_PORT=${{ vars.FLASK_RUN_PORT }}" >> \$REPO_DIR/mcp-backend/.env
+          echo "GEOJSON_FILE=${{ vars.GEOJSON_FILE }}" >> \$REPO_DIR/mcp-backend/.env
           EOF
 
       - name: Verify .env and docker-compose.yml files
