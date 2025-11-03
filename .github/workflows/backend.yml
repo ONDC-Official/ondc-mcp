@@ -119,25 +119,25 @@ jobs:
           echo ".env and docker-compose.yml files found."
           EOF
 
-      # - name: Automation Mock Server Deployment
-      #   run: |
-      #     echo "Deploying with Docker Compose"
-      #     ssh -i ./key.pem ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} <<EOF
-      #     REPO_DIR=~/mcp
-      #     cd \$REPO_DIR
+      - name: Automation Mock Server Deployment
+        run: |
+          echo "Deploying with Docker Compose"
+          ssh -i ./key.pem ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} <<EOF
+          REPO_DIR=~/mcp/mcp-backend
+          cd \$REPO_DIR
 
-      #     # Ensure the .env and docker-compose.yml files exist
-      #     if [ ! -f .env ]; then
-      #       echo ".env file not found!"
-      #       exit 1
-      #     fi
+          # Ensure the .env and docker-compose.yml files exist
+          if [ ! -f .env ]; then
+            echo ".env file not found!"
+            exit 1
+          fi
 
-      #     if [ ! -f docker-compose.yml ]; then
-      #       echo "docker-compose.yml file not found!"
-      #       exit 1
-      #     fi
+          if [ ! -f docker-compose.yml ]; then
+            echo "docker-compose.yml file not found!"
+            exit 1
+          fi
 
-      #     # Start the containers using Docker Compose
-      #     echo "Running docker-compose up -d --build"
-      #     sudo docker compose up -d --build
-      #     EOF
+          # Start the containers using Docker Compose
+          echo "Running docker-compose up -d --build"
+          sudo docker-compose up -d --build
+          EOF
