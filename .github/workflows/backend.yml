@@ -51,10 +51,56 @@ jobs:
           ssh -i ./key.pem ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} <<EOF
           REPO_DIR=~/mcp
           echo "Writing environment variables to .env file"
-          echo "FLASK_DEBUG=True" >> \$REPO_DIR/mcp-backend/.env
-          echo "FLASK_RUN_HOST=0.0.0.0" >> \$REPO_DIR/mcp-backend/.env
-          echo "FLASK_RUN_PORT=${{ vars.FLASK_RUN_PORT }}" >> \$REPO_DIR/mcp-backend/.env
-          echo "GEOJSON_FILE=${{ vars.GEOJSON_FILE }}" >> \$REPO_DIR/mcp-backend/.env
+          echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" >> \$REPO_DIR/mcp-backend/.env
+          echo "WIL_API_KEY=${{secrets.WIL_API_KEY }}" >> \$REPO_DIR/mcp-backend/.env
+
+          echo "BACKEND_ENDPOINT=${{vars.BACKEND_ENDPOINT }}" >> \$REPO_DIR/mcp-backend/.env
+          echo "API_URL=${{vars.API_URL }}" >> \$REPO_DIR/mcp-backend/.env
+
+
+          echo "GEMINI_MODEL=gemini-2.5-pro" >> \$REPO_DIR/mcp-backend/.env
+          echo "QDRANT_HOST=qdrant" >> \$REPO_DIR/mcp-backend/.env
+          echo "QDRANT_PORT=6333" >> \$REPO_DIR/mcp-backend/.env
+          echo "QDRANT_COLLECTION=himira_products" >> \$REPO_DIR/mcp-backend/.env
+          echo "HYBRID_SEARCH_ENABLED=true" >> \$REPO_DIR/mcp-backend/.env
+          echo "VECTOR_SEARCH_ENABLED=true" >> \$REPO_DIR/mcp-backend/.env
+          echo "VECTOR_SIMILARITY_THRESHOLD=0.7" >> \$REPO_DIR/mcp-backend/.env
+          echo "SEARCH_MIN_RESULTS=2" >> \$REPO_DIR/mcp-backend/.env
+          echo "SEARCH_MAX_RESULTS=25" >> \$REPO_DIR/mcp-backend/.env
+          echo "SEARCH_DEFAULT_LIMIT=10" >> \$REPO_DIR/mcp-backend/.env
+          echo "SEARCH_DEFAULT_RELEVANCE=0.7" >> \$REPO_DIR/mcp-backend/.env
+          echo "SEARCH_MIN_RELEVANCE=0.4" >> \$REPO_DIR/mcp-backend/.env
+          echo "SEARCH_MAX_RELEVANCE=0.9" >> \$REPO_DIR/mcp-backend/.env
+          echo "SEARCH_ADAPTIVE_SIZING=true" >> \$REPO_DIR/mcp-backend/.env
+          echo "SEARCH_QUERY_ANALYSIS=true" >> \$REPO_DIR/mcp-backend/.env
+          echo "SEARCH_RELEVANCE_FILTERING=true" >> \$REPO_DIR/mcp-backend/.env
+          echo "SEARCH_CONTEXT_AWARE=true" >> \$REPO_DIR/mcp-backend/.env
+          echo "SEARCH_INTENT_ANALYSIS=true" >> \$REPO_DIR/mcp-backend/.env
+          echo "MOCK_AFTER_INIT=true" >> \$REPO_DIR/mcp-backend/.env
+          echo "GOOGLE_CLIENT_TIMEOUT_MS=45000" >> \$REPO_DIR/mcp-backend/.env
+          echo "API_PORT=8001" >> \$REPO_DIR/mcp-backend/.env
+          echo "CORS_ORIGINS=*" >> \$REPO_DIR/mcp-backend/.env
+          echo "RATE_LIMIT_PER_MIN=20" >> \$REPO_DIR/mcp-backend/.env
+          echo "SESSION_TTL_HOURS=24" >> \$REPO_DIR/mcp-backend/.env
+          echo "SESSION_STORE_PATH=/app/sessions" >> \$REPO_DIR/mcp-backend/.env
+          echo "LOG_LEVEL=DEBUG" >> \$REPO_DIR/mcp-backend/.env
+          echo "MCP_DEBUG_LEVEL=FULL" >> \$REPO_DIR/mcp-backend/.env
+          echo "MCP_LOG_MAX_SIZE=5000" >> \$REPO_DIR/mcp-backend/.env
+          echo "MCP_LOG_INCLUDE_VECTORS=false" >> \$REPO_DIR/mcp-backend/.env
+          echo "DEBUG_CURL_LOGGING=true" >> \$REPO_DIR/mcp-backend/.env
+          echo "ETL_MODE=init" >> \$REPO_DIR/mcp-backend/.env
+          echo "MCP_TRANSPORT=stdio" >> \$REPO_DIR/mcp-backend/.env
+          echo "PYTHONUNBUFFERED=1" >> \$REPO_DIR/mcp-backend/.env
+          echo "SUPERVISOR_WEB_ENABLED=true" >> \$REPO_DIR/mcp-backend/.env
+          echo "SUPERVISOR_WEB_PORT=9001" >> \$REPO_DIR/mcp-backend/.env
+          echo "SUPERVISOR_WEB_USERNAME=admin" >> \$REPO_DIR/mcp-backend/.env
+          echo "SUPERVISOR_WEB_PASSWORD=supervisor2024" >> \$REPO_DIR/mcp-backend/.env
+          echo "SSE_CONNECTION_TIMEOUT=300" >> \$REPO_DIR/mcp-backend/.env
+          echo "SSE_RAW_DATA_WAIT=1.0" >> \$REPO_DIR/mcp-backend/.env
+          echo "SSE_QUEUE_TIMEOUT=0.5" >> \$REPO_DIR/mcp-backend/.env
+          echo "API_TIMEOUT=2.0" >> \$REPO_DIR/mcp-backend/.env
+          echo "API_RETRY_ATTEMPTS=2" >> \$REPO_DIR/mcp-backend/.env
+
           EOF
 
       - name: Verify .env and docker-compose.yml files
