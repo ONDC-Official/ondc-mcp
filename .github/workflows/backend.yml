@@ -49,7 +49,7 @@ jobs:
         run: |
           echo "Writing secrets to .env file"
           ssh -i ./key.pem ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} <<EOF
-          REPO_DIR=~/mcp/mcp-backend
+          REPO_DIR="$HOME/mcp/mcp-backend"
           echo "Writing environment variables to .env file"
           echo "FLASK_DEBUG=True" >> \$REPO_DIR/.env
           echo "FLASK_RUN_HOST=0.0.0.0" >> \$REPO_DIR/.env
