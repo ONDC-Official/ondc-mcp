@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
 
+import redis
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,6 +28,9 @@ from mcp_agent.agents.agent import Agent
 from mcp_agent.workflows.llm.augmented_llm_google import GoogleAugmentedLLM
 from mcp_agent.workflows.llm.augmented_llm import RequestParams
 
+from google import genai
+from google.genai import types
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -34,17 +38,70 @@ logger = logging.getLogger(__name__)
 # Rate limiter
 limiter = Limiter(key_func=get_remote_address)
 
+# Redis Session Manager
+class RedisSessionManager:
+    def __init__(self, host='localhost', port=6379, db=1):
+        try:
+            self.client = redis.Redis(host=host, port=port, db=db, decode_responses=True)
+            self.client.ping()
+            logger.info("Connected to Redis for session management. main server")
+        except redis.exceptions.ConnectionError as e:
+            logger.info(f"Could not connect to Redis: {e}. Sessions will not be persisted.")
+            logger.error(f"Could not connect to Redis: {e}. Sessions will not be persisted.")
+            self.client = None
+
+    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        if not self.client:
+            return None
+        session_data = self.client.get(f"session:{session_id}")
+        if session_data:
+            session_dict = json.loads(session_data)
+            if 'created_at' in session_dict:
+                if isinstance(session_dict['created_at'], str):
+                    session_dict['created_at'] = datetime.fromisoformat(session_dict['created_at'])
+            if 'last_activity' in session_dict:
+                if isinstance(session_dict['last_activity'], str):
+                    session_dict['last_activity'] = datetime.fromisoformat(session_dict['last_activity'])
+            return session_dict
+        return None
+
+    def set_session(self, session_id: str, session_data: Dict[str, Any]):
+        if not self.client:
+            return
+        # Convert datetime objects to isoformat strings for JSON serialization
+        session_copy = session_data.copy()
+        if 'created_at' in session_copy and isinstance(session_copy['created_at'], datetime):
+            session_copy['created_at'] = session_copy['created_at'].isoformat()
+        if 'last_activity' in session_copy and isinstance(session_copy['last_activity'], datetime):
+            session_copy['last_activity'] = session_copy['last_activity'].isoformat()
+        self.client.set(f"session:{session_id}", json.dumps(session_copy), ex=86400)  # 24-hour TTL
+
+    def delete_session(self, session_id: str):
+        if not self.client:
+            return
+        self.client.delete(f"session:{session_id}")
+
+    def exists_session(self, session_id: str) -> bool:
+        if not self.client:
+            return False
+        return self.client.exists(f"session:{session_id}") > 0
+
+    def count_session(self) -> int:
+        if not self.client:
+            return 0
+        return len(self.client.keys("session:*"))
+
 # Global instances
 mcp_app = None
 agent = None
 llm = None
-sessions = {}  # In-memory session storage (use Redis/MongoDB in production)
+sessions = RedisSessionManager(host=os.getenv("REDIS_HOST", "localhost"), port=int(os.getenv("REDIS_PORT", 6379)), db = int(os.getenv("REDIS_DB_BACKEND", 1)))
 session_llms = {}  # Session-specific LLM instances with conversation history
 raw_data_queues = {}  # Session-specific queues for raw data from MCP callbacks
 
-# ============================================================================
+# ============================================================================ 
 # Universal SSE Data Transmission System
-# ============================================================================
+# ============================================================================ 
 
 # Tool to event type mapping for SSE streaming
 TOOL_EVENT_MAPPING = {
@@ -68,6 +125,49 @@ TOOL_EVENT_MAPPING = {
     # 'get_delivery_addresses': 'raw_addresses',
     # 'get_active_offers': 'raw_offers',
 }
+
+
+AGENT_INSTRUCTION="""You are an intelligent shopping assistant that takes decisive action and chains tools automatically to fulfill user requests.
+
+🚨 CRITICAL RULE: ALWAYS call the appropriate function for user requests!
+• "search X" → MUST call search_products(query="X")
+• "view cart" → MUST call view_cart()
+• "add Y" → MUST call search_products() then add_to_cart()
+• "checkout" or "proceed to checkout" → MUST call select_items_for_order()
+• NEVER provide generic responses - ALWAYS use the specific tool
+
+INTELLIGENT BEHAVIOR:
+• Auto-add items when searching for specific products
+• Choose best option based on price/quality
+• Chain tools: search → add → view_cart → inform user
+• Always execute the most relevant tool for each request
+• CALCULATE quantities automatically when context is given
+• ALWAYS call view_cart after add_to_cart to show updated cart state
+
+QUANTITY INTELLIGENCE:
+• "for X people" → Calculate appropriate quantities based on serving size
+• "for cooking/family" → Add standard cooking quantities 
+• "need X" without quantity → Add 1 unit as default
+• NEVER ask for quantity confirmation - be decisive and add!
+
+UNIVERSAL EXAMPLES:
+User: "search for [item]" → Call search_products(query="[item]")
+User: "view my cart" → Call view_cart()
+User: "i need [item]" → Call search_products(query="[item]") → Call add_to_cart(quantity=1) → Call view_cart()
+User: "[item] for X people" → Call search_products(query="[item]") → Call add_to_cart(quantity=[calculated]) → Call view_cart()
+User: "[item] for family" → Call search_products(query="[item]") → Call add_to_cart(quantity=[reasonable]) → Call view_cart()
+User: "checkout" → Call select_items_for_order() → initialize_order() → create_payment()
+
+Be proactive - calculate quantities intelligently, use tools, don't ask for confirmation!
+
+=== CHECKOUT AUTOMATION BOUNDARIES ===
+Checkout automation: select_items_for_order → initialize_order → create_payment (then wait)
+Payment processing: verify_payment and confirm_order require explicit user/frontend requests
+After create_payment: Wait for manual payment verification before continuing"""
+# Caching
+instruction_cache = None  # Store cache reference globally
+cache_creation_time = None
+CACHE_TTL_SECONDS = 3600  # 1 hour cache lifetime
 
 def create_sse_event(tool_name, raw_data, session_id):
     """Create universal SSE event based on tool type using DRY pattern"""
@@ -163,19 +263,22 @@ def generate_session_id() -> str:
 
 def create_or_update_session(session_id: str, device_id: str, metadata: Dict[str, Any] = None) -> Dict[str, Any]:
     """Create a new session or update existing one."""
-    if session_id not in sessions:
-        sessions[session_id] = {
+    if not sessions.exists_session(session_id):
+        session_data = {
             "session_id": session_id,
             "device_id": device_id,
             "created_at": datetime.now(),
             "last_activity": datetime.now(),
             "metadata": metadata or {}
         }
+        sessions.set_session(session_id, session_data)
     else:
-        sessions[session_id]["last_activity"] = datetime.now()
+        session_data = sessions.get_session(session_id)
+        session_data["last_activity"] = datetime.now()
         if metadata:
-            sessions[session_id]["metadata"].update(metadata)
-    return sessions[session_id]
+            session_data["metadata"].update(metadata)
+        sessions.set_session(session_id, session_data)
+    return sessions.get_session(session_id)
 
 def check_agent_ready():
     """Check if agent is ready and raise appropriate error."""
@@ -215,6 +318,49 @@ def determine_context_type(tool_result: Dict[str, Any]) -> tuple[str, bool]:
     
     return None, False
 
+async def get_or_create_instruction_cache():
+    """Create or return existing instruction cache"""
+    global instruction_cache, cache_creation_time
+    
+    # Check if cache exists and is not expired
+    if instruction_cache and cache_creation_time:
+        elapsed = time.time() - cache_creation_time
+        if elapsed < CACHE_TTL_SECONDS - 60:  # Refresh 60s before expiry
+            logger.info(f"Using existing cache, age: {elapsed:.0f}s")
+            return instruction_cache
+    
+    # Create new cache
+    logger.info("Creating new instruction cache...")
+    
+    try:
+        # Initialize Gemini client
+        gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+        # Create cache with system instruction
+        # NOTE: Gemini requires versioned model for caching 
+        cache = gemini_client.caches.create(
+            model="models/gemini-2.5-flash-001",
+            config=types.CreateCachedContentConfig(
+                display_name="shopping_assistant_instruction",
+                system_instruction=AGENT_INSTRUCTION,
+                ttl=f"{CACHE_TTL_SECONDS}s"
+            )
+        )
+        
+        instruction_cache = cache
+        cache_creation_time = time.time()
+        
+        logger.info(f"✓ Cache created successfully: {cache.name}")
+        logger.info(f"Cache expires in {CACHE_TTL_SECONDS}s")
+        
+        return instruction_cache
+        
+    except Exception as e:
+        logger.error(f"Failed to create cache: {e}")
+        logger.info("Falling back to non-cached mode")
+        return None
+                  
+
 async def get_session_llm(session_id: str):
     """Get or create a session-specific LLM with conversation history"""
     logger.info(f"[LLM-LIFECYCLE] Getting LLM for session: {session_id}")
@@ -223,12 +369,25 @@ async def get_session_llm(session_id: str):
     if session_id not in session_llms:
         if not agent:
             raise HTTPException(status_code=503, detail="Agent not ready")
+         # Try to use cache first
+        cache = await get_or_create_instruction_cache()
         
-        # Create a new LLM instance for this session
-        session_llm = await agent.attach_llm(GoogleAugmentedLLM)
+        if cache:
+            # WITH CACHE: Use cached_content (token savings)
+            session_llm = await agent.attach_llm(
+                GoogleAugmentedLLM,
+                cached_content=cache.name
+            )
+            logger.info(f"Session {session_id} using CACHED instruction (75-90% savings)")
+        else:
+            # Create a new LLM instance for this session
+            session_llm = await agent.attach_llm(GoogleAugmentedLLM)
+            logger.info(f"Session {session_id} using NON-CACHED mode")
+            
         session_llms[session_id] = session_llm
         logger.info(f"[LLM-LIFECYCLE] Created NEW session LLM for session: {session_id}")
         logger.info(f"[LLM-LIFECYCLE] session_llms now has {len(session_llms)} entries")
+
     else:
         logger.info(f"[LLM-LIFECYCLE] Reusing EXISTING session LLM for session: {session_id}")
     
@@ -253,43 +412,7 @@ async def lifespan(app: FastAPI):
             # Create agent connected to MCP server via STDIO
             agent = Agent(
                 name="shopping_assistant",
-                instruction="""You are an intelligent shopping assistant that takes decisive action and chains tools automatically to fulfill user requests.
-
-🚨 CRITICAL RULE: ALWAYS call the appropriate function for user requests!
-• "search X" → MUST call search_products(query="X")
-• "view cart" → MUST call view_cart()
-• "add Y" → MUST call search_products() then add_to_cart()
-• "checkout" or "proceed to checkout" → MUST call select_items_for_order()
-• NEVER provide generic responses - ALWAYS use the specific tool
-
-INTELLIGENT BEHAVIOR:
-• Auto-add items when searching for specific products
-• Choose best option based on price/quality
-• Chain tools: search → add → view_cart → inform user
-• Always execute the most relevant tool for each request
-• CALCULATE quantities automatically when context is given
-• ALWAYS call view_cart after add_to_cart to show updated cart state
-
-QUANTITY INTELLIGENCE:
-• "for X people" → Calculate appropriate quantities based on serving size
-• "for cooking/family" → Add standard cooking quantities 
-• "need X" without quantity → Add 1 unit as default
-• NEVER ask for quantity confirmation - be decisive and add!
-
-UNIVERSAL EXAMPLES:
-User: "search for [item]" → Call search_products(query="[item]")
-User: "view my cart" → Call view_cart()
-User: "i need [item]" → Call search_products(query="[item]") → Call add_to_cart(quantity=1) → Call view_cart()
-User: "[item] for X people" → Call search_products(query="[item]") → Call add_to_cart(quantity=[calculated]) → Call view_cart()
-User: "[item] for family" → Call search_products(query="[item]") → Call add_to_cart(quantity=[reasonable]) → Call view_cart()
-User: "checkout" → Call select_items_for_order() → initialize_order() → create_payment()
-
-Be proactive - calculate quantities intelligently, use tools, don't ask for confirmation!
-
-=== CHECKOUT AUTOMATION BOUNDARIES ===
-Checkout automation: select_items_for_order → initialize_order → create_payment (then wait)
-Payment processing: verify_payment and confirm_order require explicit user/frontend requests
-After create_payment: Wait for manual payment verification before continuing""",
+                instruction=AGENT_INSTRUCTION,
                 server_names=["ondc-shopping"]  # Connects to our MCP server
             )
             
@@ -445,7 +568,33 @@ async def health_check(request: Request):
         "status": "healthy" if llm else "initializing",
         "timestamp": datetime.now(),
         "agent_ready": llm is not None,
-        "active_sessions": len(sessions)
+        "active_sessions": sessions.count_session()
+    }
+
+@app.get("/api/cache/status")
+async def cache_status():
+    """Check cache status and savings"""
+    if not instruction_cache:
+        return {
+            "cached": False, 
+            "message": "No active cache",
+            "fallback_mode": "Using direct instruction mode"
+        }
+    
+    elapsed = time.time() - cache_creation_time if cache_creation_time else 0
+    remaining = CACHE_TTL_SECONDS - elapsed
+    
+    return {
+        "cached": True,
+        "cache_name": instruction_cache.name,
+        "age_seconds": int(elapsed),
+        "remaining_seconds": int(remaining),
+        "expires_at": datetime.fromtimestamp(cache_creation_time + CACHE_TTL_SECONDS).isoformat(),
+        "active_sessions": len(session_llms),
+        "total_sessions": sessions.count_session(),
+        "estimated_savings": "75-90% on input tokens",
+        "cache_ttl": CACHE_TTL_SECONDS,
+        "model": "gemini-2.5-flash"
     }
 
 # Session management
@@ -465,20 +614,21 @@ async def create_session(request: Request, session_req: SessionCreateRequest):
 @limiter.limit("30/minute")
 async def get_session(request: Request, session_id: str):
     """Get session information"""
-    if session_id not in sessions:
+    session_data = sessions.get_session(session_id)
+    if not session_data:
         raise HTTPException(status_code=404, detail="Session not found")
     
-    return SessionResponse(**sessions[session_id])
+    return SessionResponse(**session_data)
 
 @app.delete("/api/v1/sessions/{session_id}")
 @limiter.limit("20/minute")
 async def delete_session(request: Request, session_id: str):
     """End a shopping session"""
-    if session_id not in sessions:
+    if not sessions.exists_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
     
     # Clean up session data and LLM
-    del sessions[session_id]
+    sessions.delete_session(session_id)
     if session_id in session_llms:
         del session_llms[session_id]
     
@@ -961,7 +1111,7 @@ async def root():
             "cart": "/api/v1/cart/{device_id}"
         },
         "docs": "/docs",
-        "active_sessions": len(sessions)
+        "active_sessions": sessions.count_session()
     }
 
 if __name__ == "__main__":

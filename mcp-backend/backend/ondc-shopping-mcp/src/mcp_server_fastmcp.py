@@ -83,6 +83,7 @@ from .adapters.utils import (
     get_services,
     send_raw_data_to_frontend
 )
+from src.redis_service import get_redis_client, get_redis_client_persistence
 
 # Import all tool adapters
 from .adapters.cart import (
@@ -379,8 +380,10 @@ async def handle_tool_execution(tool_name: str, adapter_func, ctx: Context, **kw
         
         # Return formatted result (JSON strings for mcp-agent compatibility)
         if isinstance(result, dict):
+            logger.info(f"[AGENT-RESPONSE] {json.dumps(result, indent=2, default=str)}")  
             return json.dumps(result, indent=2, default=str)
         else:
+            logger.info(f"[AGENT-RESPONSE] {str(result)}") 
             return str(result)
             
     except Exception as e:
@@ -1057,6 +1060,8 @@ def main():
         logger.info("🚀 Starting FastMCP server...")
         logger.info("📡 STDIO transport ready for MCP client connection")
         logger.info("✅ Server startup completed successfully")
+        get_redis_client()
+        get_redis_client_persistence()
         
         # Run the FastMCP server (handles its own event loop)
         mcp.run()
